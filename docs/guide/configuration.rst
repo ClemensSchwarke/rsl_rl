@@ -512,7 +512,7 @@ Actor Adam uses betas ``(0.9, 0.95)`` and clips each gradient value to ``[-0.1, 
    * - ``num_warmup_steps``
      - int
      - ``64``
-     - Stored steps per environment before learning; must cover ``world_model_window``.
+     - Stored steps per environment before learning.
    * - ``num_world_model_warmup_iterations``
      - int
      - ``500``
@@ -648,12 +648,14 @@ Actor Adam uses betas ``(0.9, 0.95)`` and clips each gradient value to ``[-0.1, 
    * - ``world_model_full_windows``
      - bool
      - ``False``
-     - Sample only complete windows inside an episode for dynamics fitting; needs
-       ``num_warmup_steps`` greater than ``world_model_window``.
+     - Sample complete windows that stay within an episode and contain no external state edits.
+       Requires ``num_warmup_steps`` greater than ``world_model_window``.
+       Skip learner updates when any rank has no eligible window.
    * - ``critic_survival_weighting``
      - bool
      - ``True``
-     - Weight value regression by imagined survival probabilities.
+     - Weight reachable value targets by imagined survival probabilities. When disabled, all reachable
+       targets have equal weight.
    * - ``critic_bootstrap_clipping``
      - bool
      - ``True``
@@ -664,8 +666,8 @@ Actor Adam uses betas ``(0.9, 0.95)`` and clips each gradient value to ``[-0.1, 
      - Draw new critic minibatches every epoch instead of reusing one permutation.
 
 With ``actor_ema_halflife`` set, inference and JIT/ONNX exports use EMA parameters with live normalization buffers.
-Collection and policy optimization keep using the live actor. The EMA inference actor shares the task of the live
-actor, so moving it to another device leaves the task tensors on the training device.
+Collection and policy optimization keep using the live actor. The EMA inference actor copies the task when moved
+to another device, leaving the training task in place.
 After each successful actor step ``n``, the averaging decay is
 ``min(0.5 ** (1 / h), (1 + n) / (10 + n))``, where ``h`` is the half-life and ``n`` starts at one.
 ``None`` disables averaging. Use the same ``actor_ema_halflife`` setting for training and play/export.
@@ -932,6 +934,7 @@ SuperMimicActor
 The actor consumes deployable features from the task and exports explicit ``obs_history`` and optional ``goal`` inputs.
 Feature widths are inferred at construction. Imagination and the exports evaluate the same stateless network,
 :class:`~rsl_rl.models.supermimic_actor.SuperMimicPolicy`, which actor checkpoints store under ``policy``.
+Actor checkpoints saved before this submodule was introduced can still be loaded.
 
 .. list-table::
    :header-rows: 1

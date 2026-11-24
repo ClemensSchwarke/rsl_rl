@@ -46,10 +46,9 @@ Algorithms
    during real-world deployment.
 
 :class:`~rsl_rl.algorithms.supermimic.SuperMimic`
-   SuperMimic is a model-based, off-policy RL algorithm. It fits a world model of the physical dynamics from replay and
-   optimizes a history-conditioned actor by differentiating imagined returns through the frozen world model, with a
-   critic bootstrapping the remaining return. The environment provides a differentiable task that owns geometry,
-   rewards and analytic state updates. See :ref:`supermimic-contract` for its environment and checkpoint contract.
+   SuperMimic fits physical dynamics from replay and trains a history-conditioned actor on imagined trajectories.
+   Actor gradients pass through the learned dynamics, and the critic estimates the remaining return.
+   See :ref:`supermimic-contract` for the environment and checkpoint interfaces.
 
 Models
 ^^^^^^
@@ -324,20 +323,17 @@ SuperMimic environment and checkpoints
 
 The environment supplies flat, noise-free ``state`` and optional ``goal``, privileged ``context`` and event ``labels``
 sets. Every step must supply physical successors before resets and interval events in ``extras["final_obs"]``, with
-``extras["final_obs_every_step"] = True``. Interval edits cut future model-fitting windows through ``window_break``;
-replay retains the original physical successor. Task features and ``post_dynamics`` preserve state and action gradients.
-Actor moments update during ``act`` and world-model moments during ``process_env_step``, using in-place writes compatible
-with inference-mode collection. ``updates_per_step`` accrues learner debt; runner iteration is the logging step axis.
-All optimizers share one cosine schedule over ``num_schedule_updates`` learner iterations.
+``extras["final_obs_every_step"] = True``. World-model windows end at interval edits and retain the pre-edit successor.
+Task features and ``post_dynamics`` must preserve state and action gradients.
+
 With the actor option ``use_reference_action``, the policy output is added to the task's ``reference_action`` during
-collection and imagination, e.g. the reference joint targets of motion tracking; exported policies then take an
-additional ``reference_action`` input.
+collection and imagination. The exported policy takes the reference action as an extra input.
 Tasks can also override ``dynamics_actions`` to map policy outputs to physical commands before the world model,
-``world_model_loss`` to supervise further coordinates, such as integrated joint positions, and ``update_curriculum`` to
-update task curricula from each collected step. Checkpoints also contain ``env_steps``, the number of collected steps.
+``world_model_loss`` to supervise additional coordinates, and ``update_curriculum`` to update the task during collection.
 
 Full checkpoints contain ``actor_state_dict``, ``critic_state_dict``, ``world_model_state_dict``, each model's
-``*_optimizer_state_dict`` and the learner iteration. Replay, collection history and simulator state are excluded.
+``*_optimizer_state_dict``, the learner iteration and the collected step count ``env_steps``.
+Replay, collection history and simulator state are excluded.
 ``runner.load(path, load_cfg={"actor": True, "critic": True, "world_model": True, "iteration": True})`` loads all
 models and counters with fresh optimizers. For deployment use ``runner.load(path, load_cfg={"actor": True})``; other
 partial model selections are rejected. Model state-dict loading checks tensor shapes. Task coordinate meaning must
@@ -356,10 +352,10 @@ iteration where the actor learning rate started to decay, or ``None`` before tha
 SuperMimic distributed training
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-SuperMimic uses the runner's existing ``torchrun``/NCCL setup, with one process per GPU. Each rank keeps its own
-simulation, observation history and replay buffer. Actor, world-model and critic gradients are averaged before
-clipping and optimizer updates; observation statistics use samples from all ranks. Adam, Muon and actor EMA stay
-synchronized. Learning-rate return thresholds use globally accumulated completed episodes.
+SuperMimic uses the runner's ``torchrun``/NCCL setup with one process per GPU. The runner broadcasts model parameters
+before collection. When constructing distributed learners directly, call ``broadcast_parameters()`` on each rank
+before training. Ranks keep separate simulation, observation history and replay, and combine gradients,
+observation statistics and completed-episode returns across ranks.
 
 Use the same model configuration, collection cadence and batch sizes on every rank. ``replay_buffer_capacity``,
 ``world_model_batch_size`` and ``policy_batch_size`` are per-rank values: four ranks with a policy batch of 2048
